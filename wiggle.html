@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Wiggle - DBD Style</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-family: 'Segoe UI', Arial, sans-serif;
+  }
+  #wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+  canvas {
+    background: transparent;
+  }
+  #result {
+    color: #eee;
+    font-size: 22px;
+    letter-spacing: 2px;
+    min-height: 32px;
+    text-transform: uppercase;
+  }
+  #score {
+    color: #888;
+    font-size: 14px;
+    letter-spacing: 1px;
+  }
+  #progressBarOuter {
+    width: 260px;
+    height: 10px;
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  #progressBarInner {
+    height: 100%;
+    width: 0%;
+    background: #7CFC7C;
+    transition: width 0.15s ease-out;
+  }
+  #hint {
+    color: #555;
+    font-size: 13px;
+    text-align: center;
+    max-width: 340px;
+  }
+  #backBtn {
+    margin-top: 4px;
+    padding: 10px 22px;
+    background: #111;
+    color: #eee;
+    border: 1px solid #444;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  #backBtn:hover {
+    background: #222;
+    border-color: #888;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="canvas" width="360" height="360"></canvas>
+  <div id="progressBarOuter"><div id="progressBarInner"></div></div>
+  <div id="result">Pressione ESPAÇO para começar</div>
+  <div id="score">Acertos: 0/10 | Sucessos: 0</div>
+  <div id="hint">A agulha gira sem parar. Duas áreas de acerto opostas no círculo (como no wiggle do DBD). Perfeito conta como 2 acertos. Uma falha zera acertos e sucessos.</div>
+  <a id="backBtn" href="skill_check_dbd.html">Voltar ao Skill Check</a>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const resultEl = document.getElementById('result');
+const scoreEl = document.getElementById('score');
+const progressBarInner = document.getElementById('progressBarInner');
+
+const CX = canvas.width / 2;
+const CY = canvas.height / 2;
+const RADIUS = 140;
+const HITS_NEEDED = 10;
+
+let running = false;
+let needleAngle = -Math.PI / 2;
+let direction = 1; // 1 = horário, -1 = anti-horário
+const SPEED = 0.07;
+
+// zona A e zona B (oposta, 180 graus de diferença)
+let zoneStart = 0;
+let zoneWidth = 0;
+let greatWidth = 0;
+let greatOffset = 0; // posição da zona great dentro da zona normal
+
+let hitCount = 0;
+let successCount = 0;
+let particles = [];
+
+let flashTimer = 0;
+let flashColor = '#fff';
+let flashText = '';
+
+function randomZone() {
+  zoneWidth = (Math.random() * 0.19 + 0.26); // largura da zona boa
+  zoneStart = Math.random() * Math.PI * 2;
+  greatWidth = zoneWidth * 0.35;
+  greatOffset = (zoneWidth - greatWidth) * Math.random();
+}
+
+function normalizeAngle(a) {
+  const twoPi = Math.PI * 2;
+  a = a % twoPi;
+  if (a < 0) a += twoPi;
+  return a;
+}
+
+function angleInZone(angle, start, width) {
+  angle = normalizeAngle(angle);
+  const s = normalizeAngle(start);
+  const e = normalizeAngle(start + width);
+  if (s < e) {
+    return angle >= s && angle <= e;
+  } else {
+    return angle >= s || angle <= e;
+  }
+}
+
+// verifica as duas zonas opostas (A e A+180°) de uma vez
+function checkHit(angle) {
+  const starts = [zoneStart, zoneStart + Math.PI];
+  const greatStarts = [zoneStart + greatOffset, zoneStart + Math.PI + greatOffset];
+
+  for (let i = 0; i < 2; i++) {
+    if (angleInZone(angle, greatStarts[i], greatWidth)) return 'great';
+  }
+  for (let i = 0; i < 2; i++) {
+    if (angleInZone(angle, starts[i], zoneWidth)) return 'good';
+  }
+  return 'miss';
+}
+
+function drawZoneOutline(startAngle, width, color, r, thickness) {
+  const rInner = r - thickness / 2;
+  const rOuter = r + thickness / 2;
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = color;
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, rOuter, startAngle, startAngle + width);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, rInner, startAngle, startAngle + width);
+  ctx.stroke();
+
+  function tick(angle) {
+    const x1 = CX + Math.cos(angle) * rInner;
+    const y1 = CY + Math.sin(angle) * rInner;
+    const x2 = CX + Math.cos(angle) * rOuter;
+    const y2 = CY + Math.sin(angle) * rOuter;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  tick(startAngle);
+  tick(startAngle + width);
+}
+
+function drawArc(startAngle, width, color, lineWidth, r) {
+  ctx.beginPath();
+  ctx.arc(CX, CY, r, startAngle, startAngle + width);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineCap = 'butt';
+  ctx.stroke();
+}
+
+function spawnBlood(x, y) {
+  particles = [];
+  const bloodColors = ['#8b0000', '#a30000', '#6e0000', '#c41e1e', '#5c0000']; //cor do sangue
+
+  // respingos: se espalham rápido e desaceleram, formando manchas
+  const splatCount = 16;
+  for (let i = 0; i < splatCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = Math.random() * 5 + 2;
+    particles.push({
+      type: 'splat',
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      gravity: 0.05 + Math.random() * 0.05,
+      life: 55 + Math.random() * 25,
+      maxLife: 80,
+      size: Math.random() * 5 + 2.5,
+      color: bloodColors[Math.floor(Math.random() * bloodColors.length)]
+    });
+  }
+
+  // gotas: caem com gravidade e se esticam formando pingos
+  const dripCount = 10;
+  for (let i = 0; i < dripCount; i++) {
+    particles.push({
+      type: 'drip',
+      x: x + (Math.random() - 0.5) * 26,
+      y: y + (Math.random() - 0.5) * 18,
+      vx: (Math.random() - 0.5) * 0.6,
+      vy: Math.random() * 0.8,
+      gravity: 0.18 + Math.random() * 0.08,
+      life: 70 + Math.random() * 30,
+      maxLife: 100,
+      size: Math.random() * 2.5 + 1.5,
+      color: bloodColors[Math.floor(Math.random() * bloodColors.length)]
+    });
+  }
+}
+
+function updateParticles() {
+  for (const p of particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += p.gravity || 0;
+    if (p.type === 'splat') {
+      p.vx *= 0.9;
+      p.vy *= 0.9;
+    } else if (p.type === 'drip') {
+      p.vx *= 0.98;
+    } else {
+      p.vx *= 0.94;
+      p.vy *= 0.94;
+    }
+    p.life--;
+  }
+  particles = particles.filter(p => p.life > 0);
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.color;
+
+    if (p.type === 'drip') {
+      // pingo alongado na direção da queda
+      const stretch = Math.min(3, 1 + Math.abs(p.vy) * 0.4);
+      ctx.beginPath();
+      ctx.ellipse(p.x, p.y, p.size, p.size * stretch, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.beginPath();
+  ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  if (running) {
+    // duas zonas opostas (A e A+180°)
+    drawZoneOutline(zoneStart, zoneWidth, 'rgba(255,255,255,0.9)', RADIUS, 14);
+    drawZoneOutline(zoneStart + Math.PI, zoneWidth, 'rgba(255,255,255,0.9)', RADIUS, 14);
+
+    drawArc(zoneStart + greatOffset, greatWidth, '#ffffff', 10, RADIUS);
+    drawArc(zoneStart + Math.PI + greatOffset, greatWidth, '#ffffff', 10, RADIUS);
+
+    // agulha
+    const nx = CX + Math.cos(needleAngle) * RADIUS;
+    const ny = CY + Math.sin(needleAngle) * RADIUS;
+    const nx2 = CX + Math.cos(needleAngle) * (RADIUS - 24);
+    const ny2 = CY + Math.sin(needleAngle) * (RADIUS - 24);
+    ctx.beginPath();
+    ctx.moveTo(nx2, ny2);
+    ctx.lineTo(nx, ny);
+    ctx.strokeStyle = '#ff2b2b';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  if (flashTimer > 0) {
+    ctx.beginPath();
+    ctx.arc(CX, CY, RADIUS - 30, 0, Math.PI * 2);
+    ctx.fillStyle = flashColor;
+    ctx.globalAlpha = Math.max(0, flashTimer / 20) * 0.15;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.font = 'bold 20px Segoe UI, Arial';
+  ctx.fillStyle = '#eee';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (running) {
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(CX - 65, CY - 18, 130, 36);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(CX - 65, CY - 18, 130, 36);
+    ctx.strokeStyle = '#eee';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(CX - 65, CY - 18, 130, 36);
+    ctx.fillStyle = '#eee';
+    ctx.fillText('ESPAÇO', CX, CY + 1);
+  }
+
+  if (flashTimer > 0 && flashText) {
+    ctx.font = 'bold 26px Segoe UI, Arial';
+    ctx.fillStyle = flashColor;
+    ctx.fillText(flashText, CX, CY - 50);
+  }
+
+  drawParticles();
+}
+
+function loop() {
+  updateParticles();
+  if (flashTimer > 0) flashTimer--;
+  if (running) {
+    needleAngle += SPEED * direction;
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function startWiggle() {
+  running = true;
+  needleAngle = -Math.PI / 2;
+  direction = 1;
+  hitCount = 0;
+  successCount = 0;
+  randomZone();
+  resultEl.textContent = '';
+  updateScore();
+}
+
+function flash(text, color) {
+  flashTimer = 24;
+  flashText = text;
+  flashColor = color;
+  resultEl.textContent = text;
+  resultEl.style.color = color;
+}
+
+function updateScore() {
+  scoreEl.textContent = `Acertos: ${hitCount}/${HITS_NEEDED} | Sucessos: ${successCount}`;
+  const pct = (hitCount / HITS_NEEDED) * 100;
+  progressBarInner.style.width = pct + '%';
+}
+
+function handleSpace() {
+  if (!running) {
+    startWiggle();
+    return;
+  }
+
+  const result = checkHit(needleAngle);
+
+  if (result === 'great') {
+    hitCount += 2;
+    direction *= -1;
+    progressBarInner.style.background = '#ffffff';
+    flash('PERFEITO! (+2)', '#ffffff');
+  } else if (result === 'good') {
+    hitCount += 1;
+    direction *= -1;
+    progressBarInner.style.background = '#7CFC7C';
+    flash('ACERTOU (+1)', '#7CFC7C');
+  } else {
+    hitCount = 0;
+    successCount = 0;
+    const nx = CX + Math.cos(needleAngle) * RADIUS;
+    const ny = CY + Math.sin(needleAngle) * RADIUS;
+    spawnBlood(nx, ny);
+    progressBarInner.style.background = '#ff4d4d';
+    flash('ERROU - REINICIOU', '#ff4d4d');
+    updateScore();
+    randomZone();
+    return;
+  }
+
+  while (hitCount >= HITS_NEEDED) {
+    hitCount -= HITS_NEEDED;
+    successCount++;
+  }
+
+  randomZone();
+  updateScore();
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    handleSpace();
+  }
+});
+
+draw();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
